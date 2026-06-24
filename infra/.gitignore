@@ -1,0 +1,72 @@
+# Ignore sensitive files and build artifacts
+
+# Terraform state and backend files
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+*.tfstate.lock.hcl
+tfplan*
+.terraform/
+.terraform.lock.hcl
+.terraform.d/
+crash.log
+
+# Bicep compiled output
+*.json
+!parameters/*.json
+
+# Local CLI configuration
+.azure/
+.azurerc
+
+# IDE files
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+.idea/
+
+# Credentials and secrets (CRITICAL - Never commit!)
+secrets.txt
+credentials.json
+sp-credentials.json
+*.pem
+*.key
+kubeconfig
+.kube/
+
+# Build and output files
+*.zip
+*.tar.gz
+output/
+dist/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Platform-specific
+.env
+.env.local
+.env.*.local
+
+# CI/CD artifacts
+reports/
+coverage/
+test-results/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Misc
+.DS_Store
+Thumbs.db

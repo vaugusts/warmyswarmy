@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root{ --color-primary:#0ea5e9 }
+
+.btn-shadow{ box-shadow: 0 6px 18px rgba(2,6,23,0.08) }
+
+:focus{ outline: 3px solid rgba(14,165,233,0.25); outline-offset:2px }

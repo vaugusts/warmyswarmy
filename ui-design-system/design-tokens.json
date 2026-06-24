@@ -1,0 +1,12 @@
+{
+  "colors": {
+    "primary": "#0ea5e9",
+    "muted": "#6b7280",
+    "surface": "#ffffff",
+    "bg": "#f8fafc",
+    "danger": "#ef4444",
+    "success": "#10b981"
+  },
+  "radius": { "md": "10px" },
+  "typography": { "base": "16px" }
+}
