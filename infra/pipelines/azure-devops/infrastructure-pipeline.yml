@@ -1,0 +1,278 @@
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - infra/bicep/**
+    - infra/terraform/**
+    - infra/pipelines/azure-devops/**
+
+pr:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - infra/bicep/**
+    - infra/terraform/**
+
+variables:
+  TERRAFORM_VERSION: '1.5.7'
+  BICEP_VERSION: '0.21.1'
+
+stages:
+  - stage: Validate
+    displayName: 'Validate IaC'
+    jobs:
+      - job: ValidateBicep
+        displayName: 'Validate Bicep Templates'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+
+          - task: UseDotNet@2
+            displayName: 'Install .NET'
+            inputs:
+              version: '7.x'
+
+          - task: AzureResourceManagerTemplateDeployment@3
+            displayName: 'Validate Bicep - Dev'
+            inputs:
+              deploymentScope: 'Resource Group'
+              azureResourceManagerConnection: '$(AzureResourceConnection)'
+              subscriptionId: '$(AzureSubscriptionId)'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: 'rg-validation'
+              location: 'eastus'
+              templateLocation: 'Linked artifact'
+              cmsTemplate: '$(System.DefaultWorkingDirectory)/infra/bicep/main.bicep'
+              cmsTemplateParameters: '$(System.DefaultWorkingDirectory)/infra/bicep/parameters/dev.bicepparam'
+              deploymentMode: 'Validation'
+
+          - script: |
+              echo "##[group]Security Scan with Checkov"
+              pip install checkov
+              checkov -d $(System.DefaultWorkingDirectory)/infra/bicep --framework bicep --compact
+              echo "##[endgroup]"
+            displayName: 'Security Scan (Checkov)'
+            continueOnError: true
+
+      - job: ValidateTerraform
+        displayName: 'Validate Terraform'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+
+          - task: TerraformInstaller@0
+            displayName: 'Install Terraform'
+            inputs:
+              terraformVersion: $(TERRAFORM_VERSION)
+
+          - task: TerraformTaskV2@2
+            displayName: 'Terraform Init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/infra/terraform'
+              backendServiceArm: '$(AzureResourceConnection)'
+              backendAzureRmResourceGroupName: '$(TfBackendRg)'
+              backendAzureRmStorageAccountName: '$(TfBackendSa)'
+              backendAzureRmContainerName: '$(TfBackendContainer)'
+              backendAzureRmKey: 'terraform.tfstate'
+
+          - task: TerraformTaskV2@2
+            displayName: 'Terraform Validate'
+            inputs:
+              provider: 'azurerm'
+              command: 'validate'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/infra/terraform'
+
+          - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV2@2
+            displayName: 'TFLint Scan'
+            inputs:
+              provider: 'azurerm'
+              command: 'custom'
+              customCommand: 'fmt'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/infra/terraform'
+              customCommandArgs: '-check -recursive'
+            continueOnError: true
+
+  - stage: Plan
+    displayName: 'Generate Plans'
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - job: PlanDev
+        displayName: 'Plan Dev Deployment'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+
+          - task: TerraformInstaller@0
+            displayName: 'Install Terraform'
+            inputs:
+              terraformVersion: $(TERRAFORM_VERSION)
+
+          - task: TerraformTaskV2@2
+            displayName: 'Terraform Init - Dev'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/infra/terraform'
+              backendServiceArm: '$(AzureResourceConnection)'
+              backendAzureRmResourceGroupName: '$(TfBackendRg)'
+              backendAzureRmStorageAccountName: '$(TfBackendSa)'
+              backendAzureRmContainerName: '$(TfBackendContainer)'
+              backendAzureRmKey: 'dev.tfstate'
+
+          - task: TerraformTaskV2@2
+            displayName: 'Terraform Plan - Dev'
+            inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/infra/terraform'
+              commandOptions: '-var-file="environments/dev/dev.tfvars" -out=tfplan_dev'
+              environmentServiceNameAzureRM: '$(AzureResourceConnection)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Plan Artifact'
+            inputs:
+              pathToPublish: '$(System.DefaultWorkingDirectory)/infra/terraform/tfplan_dev'
+              artifactName: 'terraform-plan-dev'
+              publishLocation: 'Container'
+
+      - job: PlanProd
+        displayName: 'Plan Prod Deployment'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+
+          - task: TerraformInstaller@0
+            displayName: 'Install Terraform'
+            inputs:
+              terraformVersion: $(TERRAFORM_VERSION)
+
+          - task: TerraformTaskV2@2
+            displayName: 'Terraform Init - Prod'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/infra/terraform'
+              backendServiceArm: '$(AzureResourceConnection)'
+              backendAzureRmResourceGroupName: '$(TfBackendRg)'
+              backendAzureRmStorageAccountName: '$(TfBackendSa)'
+              backendAzureRmContainerName: '$(TfBackendContainer)'
+              backendAzureRmKey: 'prod.tfstate'
+
+          - task: TerraformTaskV2@2
+            displayName: 'Terraform Plan - Prod'
+            inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/infra/terraform'
+              commandOptions: '-var-file="environments/prod/prod.tfvars" -out=tfplan_prod'
+              environmentServiceNameAzureRM: '$(AzureResourceConnection)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Plan Artifact'
+            inputs:
+              pathToPublish: '$(System.DefaultWorkingDirectory)/infra/terraform/tfplan_prod'
+              artifactName: 'terraform-plan-prod'
+              publishLocation: 'Container'
+
+  - stage: Deploy
+    displayName: 'Deploy Infrastructure'
+    dependsOn: Plan
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployDev
+        displayName: 'Deploy to Dev'
+        environment: 'dev'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: DownloadBuildArtifacts@0
+                  displayName: 'Download Plan Artifact'
+                  inputs:
+                    artifactName: 'terraform-plan-dev'
+                    downloadPath: '$(System.DefaultWorkingDirectory)/infra/terraform'
+
+                - task: TerraformInstaller@0
+                  displayName: 'Install Terraform'
+                  inputs:
+                    terraformVersion: $(TERRAFORM_VERSION)
+
+                - task: TerraformTaskV2@2
+                  displayName: 'Terraform Init - Dev'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: '$(System.DefaultWorkingDirectory)/infra/terraform'
+                    backendServiceArm: '$(AzureResourceConnection)'
+                    backendAzureRmResourceGroupName: '$(TfBackendRg)'
+                    backendAzureRmStorageAccountName: '$(TfBackendSa)'
+                    backendAzureRmContainerName: '$(TfBackendContainer)'
+                    backendAzureRmKey: 'dev.tfstate'
+
+                - task: TerraformTaskV2@2
+                  displayName: 'Terraform Apply - Dev'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'apply'
+                    workingDirectory: '$(System.DefaultWorkingDirectory)/infra/terraform'
+                    commandOptions: 'tfplan_dev'
+                    environmentServiceNameAzureRM: '$(AzureResourceConnection)'
+
+      - deployment: DeployProd
+        displayName: 'Deploy to Prod'
+        environment: 'prod'
+        dependsOn: DeployDev
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: DownloadBuildArtifacts@0
+                  displayName: 'Download Plan Artifact'
+                  inputs:
+                    artifactName: 'terraform-plan-prod'
+                    downloadPath: '$(System.DefaultWorkingDirectory)/infra/terraform'
+
+                - task: TerraformInstaller@0
+                  displayName: 'Install Terraform'
+                  inputs:
+                    terraformVersion: $(TERRAFORM_VERSION)
+
+                - task: TerraformTaskV2@2
+                  displayName: 'Terraform Init - Prod'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: '$(System.DefaultWorkingDirectory)/infra/terraform'
+                    backendServiceArm: '$(AzureResourceConnection)'
+                    backendAzureRmResourceGroupName: '$(TfBackendRg)'
+                    backendAzureRmStorageAccountName: '$(TfBackendSa)'
+                    backendAzureRmContainerName: '$(TfBackendContainer)'
+                    backendAzureRmKey: 'prod.tfstate'
+
+                - task: TerraformTaskV2@2
+                  displayName: 'Terraform Apply - Prod'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'apply'
+                    workingDirectory: '$(System.DefaultWorkingDirectory)/infra/terraform'
+                    commandOptions: 'tfplan_prod'
+                    environmentServiceNameAzureRM: '$(AzureResourceConnection)'
